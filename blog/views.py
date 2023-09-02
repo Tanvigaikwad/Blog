@@ -1,80 +1,126 @@
-from django.shortcuts import render
-from datetime import date
+from typing import Any, Dict
+from django.db.models.query import QuerySet
+from django.shortcuts import render, get_object_or_404
+#from datetime import date
+from django.views.generic import ListView
+from django.views import View
+from django.http import HttpResponseRedirect
 
-all_posts = [
-    {
-        "slug": "hike-in-the-mountains",
-        "image": "mountains.jpg",
-        "author": "Tanvi",
-        "date": date(2023,8,10),
-        "title":"Mountain Hiking",
-        "excerpt":"There's nothing like the views you get when hiking in the mountains! And I wasn't even prepared for what happened whilst I was enjoying the view!",
-        "content": """ 
-         Lorem ipsum dolor sit amet consectetur adipisicing elit. Sequi nam 
-         impedit omnis atque perferendis solutaamet
-         ? Hic dolorem a praesentium adipisci autem sit,
-         voluptatum perferendis pariatur aperiam eveniet odio illum.
-        """
-
-
-    },
-    {
-        "slug": "programming-is-fun",
-        "image": "coding.jpg",
-        "author": "Tanvi",
-        "date": date(2023,3,10),
-        "title":"Programming is great",
-        "excerpt":"Did you ever spend hours searching that one error in code?",
-        "content": """ 
-         Lorem ipsum dolor sit amet consectetur adipisicing elit. Sequi nam 
-         impedit omnis atque perferendis solutaamet
-         ? Hic dolorem a praesentium adipisci autem sit,
-         voluptatum perferendis pariatur aperiam eveniet odio illum.
-
-         Lorem ipsum dolor sit amet consectetur adipisicing elit. Sequi nam 
-         impedit omnis atque perferendis solutaamet
-         ? Hic dolorem a praesentium adipisci autem sit,
-         voluptatum perferendis pariatur aperiam eveniet odio illum.
-        """
-
-
-    },
-    {
-        "slug": "into-the-woods",
-        "image": "woods.jpg",
-        "author": "Tanvi",
-        "date": date(2023,10,10),
-        "title":"Nature at it's best",
-        "excerpt":"Nature is amazing! The amount of inspiration I get when walking into nature",
-        "content": """ 
-         Lorem ipsum dolor sit amet consectetur adipisicing elit. Sequi nam 
-         impedit omnis atque perferendis solutaamet
-         ? Hic dolorem a praesentium adipisci autem sit,
-         voluptatum perferendis pariatur aperiam eveniet odio illum.
-         """
-    }
-]
+from .models import Post
+from .forms import CommentForm
+from django.urls import reverse
 
 # Create your views here.
-def get_date(post):
-    return post['date']
+#def get_date(post):
+    #return post['date']
+
+class StartingPageView(ListView):
+    template_name = "blog/index.html"
+    model = Post
+    ordering = ["-date"]
+    context_object_name = "posts"
 
 
-def starting_page(request):
-    sorted_posts = sorted(all_posts, key=get_date)
-    latest_posts = sorted_posts[-3:]
-    return render(request,"blog/index.html",{
-        "posts":latest_posts
-    })
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        data = queryset[:3]
+        return data
+    
 
 
-def posts(request):
-    return render(request,"blog/all-posts.html",{
-      "all_posts":all_posts 
-    })
+class AllPostsView(ListView):
+    template_name = "blog/all-posts.html"
+    model = Post
+    ordering = ["-date"]
+    context_object_name = "all_posts"
 
-def post_detail(request,slug):
-    identified_post = next(post for post in all_posts if post['slug'] == slug)
-    return render(request,"blog/post-detail.html",{
-        "post":identified_post
-    })
+
+class SinglePostView(View):
+    def is_stored_post(self, request, post_id):
+        stored_posts = request.session.get("stored_posts")
+        if stored_posts is not None:
+            is_saved_for_later = post_id in stored_posts
+        else:
+            is_saved_for_later = False    
+        
+        return is_saved_for_later
+
+    
+    def get(self, request, slug):
+        post = Post.objects.get(slug=slug)
+
+        
+        context = {
+            "post": post,
+            "post_tags": post.tags.all(),
+            "comment_form": CommentForm(),
+            "comments": post.comments.all().order_by("-id"),
+            "saved_for_later": self.is_stored_post(request, post.id)
+        }
+        return render(request, "blog/post-detail.html", context)
+    
+
+
+    def post(self, request,slug):
+        comment_form = CommentForm(request.POST)
+        post = Post.objects.get(slug=slug)
+
+        if comment_form.is_valid():
+            comment = comment_form.save(commit=False)
+            comment.post = post
+            comment.save()
+
+            return HttpResponseRedirect(reverse("post-detail-page", args=[slug]))
+        
+        
+        context = {
+            "post": post,
+            "post_tags": post.tags.all(),
+            "comment_form": comment_form,
+            "comments": post.comments.all().order_by("-id"),
+            "saved_for_later": self.is_stored_post(request, post.id)
+
+        }
+        return render(request, "blog/post-detail.html", context)
+
+class ReadLaterView(View):
+    def get(self, request):
+        stored_posts = request.session.get("stored_posts")
+
+        context = {}
+
+        if stored_posts is None or len(stored_posts) == 0:
+            context["posts"] = []
+            context["has_posts"] = False
+        else:
+            Posts = Post.objects.filter(id__in=stored_posts)
+            context["posts"] = Posts
+            context["has_posts"] = True
+        
+        return render(request, "blog/stored-posts.html", context)       
+
+    def post(self,request):
+        stored_posts = request.session.get("stored_posts")
+
+        if stored_posts is None:
+            stored_posts = []
+        
+        post_id = int(request.POST["post_id"])
+
+        if post_id not in stored_posts:
+            stored_posts.append(post_id)
+        else:
+            stored_posts.remove(post_id)    
+
+        request.session["stored_posts"] = stored_posts    
+
+        return HttpResponseRedirect("/")    
+
+
+
+
+
+
+
+
+
